@@ -12,7 +12,10 @@ export function useSSRStorage<T>(
   options: SSRStorageOptions<T> = {}
 ): [value: T, setValue: SetValue<T>, removeValue: () => void, error: SSRStorageError | null] {
   const { storage: storageOption, schema, syncTabs = true, debounceMs = 0 } = options;
-  const serializer = options.serializer ?? defaultSerializer<T>();
+  // Memoized so identity is stable across renders when the caller doesn't pass a
+  // custom serializer — otherwise a fresh object every render would defeat the
+  // `storedValue` memo below and force it to re-parse on every single render.
+  const serializer = useMemo(() => options.serializer ?? defaultSerializer<T>(), [options.serializer]);
 
   checkInitialValueConsistency(key, initialValue);
 
@@ -89,7 +92,7 @@ export function useSSRStorage<T>(
       const result = schema ? schema.parse(parsed) : parsed;
       parseErrorRef.current = null;
       return result;
-    } catch (err) {
+    } catch {
       parseErrorRef.current = new SSRStorageError(
         `Failed to parse or validate stored value for key "${key}"`,
         'validation',
@@ -97,9 +100,8 @@ export function useSSRStorage<T>(
         'read'
       );
       return initialValue;
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }
-  }, [rawSnapshot, key, initialValue]);
+  }, [rawSnapshot, key, initialValue, serializer, schema]);
 
   // Read-path errors never throw (asymmetric handling) — they're surfaced here instead,
   // synced after render rather than during the getSnapshot/memo calls themselves.
@@ -119,11 +121,10 @@ export function useSSRStorage<T>(
       if (JSON.stringify(committed) === JSON.stringify(override.value)) {
         setOverride(null);
       }
-      // eslint-disable-next-line no-empty
     } catch {
       // leave override in place; the read-path error above already surfaces this
     }
-  }, [rawSnapshot, override, key]);
+  }, [rawSnapshot, override, key, serializer, schema]);
 
   const value = override && override.key === key ? override.value : storedValue;
 
